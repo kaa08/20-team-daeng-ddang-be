@@ -15,6 +15,7 @@ import com.daengddang.daengdong_map.dto.response.walk.WalkStartResponse;
 import com.daengddang.daengdong_map.repository.BlockOwnershipRepository;
 import com.daengddang.daengdong_map.repository.projection.BlockOwnershipView;
 import com.daengddang.daengdong_map.repository.WalkBlockLogRepository;
+import com.daengddang.daengdong_map.repository.WalkBlockRestoreEntry;
 import com.daengddang.daengdong_map.util.AccessValidator;
 import com.daengddang.daengdong_map.util.BlockOwnershipMapper;
 import com.daengddang.daengdong_map.util.WalkRuntimeStateRegistry;
@@ -22,12 +23,15 @@ import com.daengddang.daengdong_map.util.WalkMetricsValidator;
 import com.daengddang.daengdong_map.repository.WalkPointRepository;
 import com.daengddang.daengdong_map.repository.WalkRepository;
 import com.daengddang.daengdong_map.domain.ranking.RankingPeriodType;
+import com.daengddang.daengdong_map.service.block.lock.BlockOccupancyLockProperties;
+import com.daengddang.daengdong_map.service.block.lock.BlockOccupancyLockService;
 import com.daengddang.daengdong_map.service.cache.RankingPersonalCacheStore;
 import com.daengddang.daengdong_map.service.cache.RankingRegionSummaryCacheStore;
 import com.daengddang.daengdong_map.service.ranking.batch.PeriodRange;
 import com.daengddang.daengdong_map.service.ranking.batch.RankingPeriodResolver;
 import com.daengddang.daengdong_map.service.ranking.zset.RankingZsetRealtimeUpdater;
 import java.time.LocalDateTime;
+import java.util.LinkedHashSet;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -43,6 +47,8 @@ public class WalkService {
     private final WalkPointRepository walkPointRepository;
     private final BlockOwnershipRepository blockOwnershipRepository;
     private final WalkBlockLogRepository walkBlockLogRepository;
+    private final BlockOccupancyLockProperties blockOccupancyLockProperties;
+    private final BlockOccupancyLockService blockOccupancyLockService;
     private final AccessValidator accessValidator;
     private final WalkRuntimeStateRegistry stateRegistry;
     private final RankingZsetRealtimeUpdater rankingZsetRealtimeUpdater;
@@ -114,6 +120,7 @@ public class WalkService {
             removeBlocksAcquiredInWalk(walk.getId());
         }
 
+        releaseOwnedBlockLocks(walk);
         rankingZsetRealtimeUpdater.addDistanceForFinishedWalk(dog, storedDistanceMeters);
         evictCurrentWeekPersonalRankingCache();
         evictCurrentWeekRegionRankingCache();
@@ -156,8 +163,7 @@ public class WalkService {
     }
 
     private void removeBlocksAcquiredInWalk(Long walkId) {
-        List<com.daengddang.daengdong_map.repository.WalkBlockRestoreEntry> entries =
-                walkBlockLogRepository.findRestoreEntriesByWalkId(walkId);
+        List<WalkBlockRestoreEntry> entries = walkBlockLogRepository.findRestoreEntriesByWalkId(walkId);
         if (entries.isEmpty()) {
             return;
         }
@@ -174,6 +180,31 @@ public class WalkService {
 
         if (!blocksToDelete.isEmpty()) {
             blockOwnershipRepository.deleteAllByIdInBatch(blocksToDelete);
+        }
+    }
+
+    private void releaseOwnedBlockLocks(Walk walk) {
+        if (!blockOccupancyLockProperties.isEnabled()) {
+            return;
+        }
+
+        LinkedHashSet<Long> blockIds = new LinkedHashSet<>();
+        walkBlockLogRepository.findRestoreEntriesByWalkId(walk.getId())
+                .stream()
+                .map(WalkBlockRestoreEntry::getBlockId)
+                .forEach(blockIds::add);
+        blockOwnershipRepository.findAllByDog(walk.getDog())
+                .stream()
+                .map(blockOwnership -> blockOwnership.getId())
+                .forEach(blockIds::add);
+
+        if (blockIds.isEmpty()) {
+            return;
+        }
+
+        String ownerToken = blockOccupancyLockService.buildOwnerToken(walk.getDog().getId(), walk.getId());
+        for (Long blockId : blockIds) {
+            blockOccupancyLockService.release(blockId, ownerToken);
         }
     }
 

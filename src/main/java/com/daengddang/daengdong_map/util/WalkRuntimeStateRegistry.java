@@ -15,6 +15,7 @@ public class WalkRuntimeStateRegistry {
 
     private static final Duration SYNC_TTL = Duration.ofMinutes(30);
     private static final Duration STAY_TTL = Duration.ofMinutes(30);
+    private static final Duration LOCK_HEARTBEAT_TTL = Duration.ofMinutes(30);
 
     private final RedissonClient redissonClient;
 
@@ -56,11 +57,28 @@ public class WalkRuntimeStateRegistry {
         map.expire(STAY_TTL);
     }
 
+    public LockHeartbeatState getLockHeartbeatState(Long walkId) {
+        RMap<String, String> map = redissonClient.getMap(lockHeartbeatKey(walkId), StringCodec.INSTANCE);
+        String blockId = map.get("blockId");
+        String lastRefreshedAt = map.get("lastRefreshedAt");
+        if (blockId == null || lastRefreshedAt == null) {
+            return null;
+        }
+        return new LockHeartbeatState(Long.parseLong(blockId), LocalDateTime.parse(lastRefreshedAt));
+    }
+
+    public void putLockHeartbeatState(Long walkId, LockHeartbeatState state) {
+        RMap<String, String> map = redissonClient.getMap(lockHeartbeatKey(walkId), StringCodec.INSTANCE);
+        map.fastPut("blockId", String.valueOf(state.getBlockId()));
+        map.fastPut("lastRefreshedAt", state.getLastRefreshedAt().toString());
+        map.expire(LOCK_HEARTBEAT_TTL);
+    }
+
     public void clear(Long walkId) {
         if (walkId == null) {
             return;
         }
-        redissonClient.getKeys().delete(syncKey(walkId), stayKey(walkId));
+        redissonClient.getKeys().delete(syncKey(walkId), stayKey(walkId), lockHeartbeatKey(walkId));
     }
 
     private String syncKey(Long walkId) {
@@ -69,6 +87,10 @@ public class WalkRuntimeStateRegistry {
 
     private String stayKey(Long walkId) {
         return "walk:stay:" + walkId;
+    }
+
+    private String lockHeartbeatKey(Long walkId) {
+        return "walk:lock:heartbeat:" + walkId;
     }
 
     @Getter
@@ -100,6 +122,21 @@ public class WalkRuntimeStateRegistry {
 
         public void recordLastSeenAt(LocalDateTime lastSeenAt) {
             this.lastSeenAt = lastSeenAt;
+        }
+    }
+
+    @Getter
+    public static class LockHeartbeatState {
+        private final Long blockId;
+        private LocalDateTime lastRefreshedAt;
+
+        public LockHeartbeatState(Long blockId, LocalDateTime lastRefreshedAt) {
+            this.blockId = blockId;
+            this.lastRefreshedAt = lastRefreshedAt;
+        }
+
+        public void recordLastRefreshedAt(LocalDateTime lastRefreshedAt) {
+            this.lastRefreshedAt = lastRefreshedAt;
         }
     }
 }
