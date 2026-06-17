@@ -1,5 +1,7 @@
 package com.daengddang.daengdong_map.util;
 
+import com.daengddang.daengdong_map.common.ErrorCode;
+import com.daengddang.daengdong_map.common.exception.BaseException;
 import com.daengddang.daengdong_map.domain.walk.Walk;
 import com.daengddang.daengdong_map.domain.walk.WalkStatus;
 import com.daengddang.daengdong_map.repository.WalkRepository;
@@ -12,12 +14,13 @@ public class WalkSessionValidator {
 
     private final WalkRepository walkRepository;
 
-    public Walk getActiveWalkOrNull(Long walkId) {
-        Walk walk = walkRepository.findById(walkId).orElse(null);
-        if (walk == null || walk.getStatus() != WalkStatus.IN_PROGRESS) {
-            return null;
-        }
-        return walk;
+    public Walk getOwnedWalkOrThrow(Long walkId, Long userId) {
+        return walkRepository.findOwnedWalkByIdAndUserId(walkId, userId)
+                .orElseThrow(() -> new BaseException(ErrorCode.FORBIDDEN));
+    }
+
+    public boolean isActive(Walk walk) {
+        return walk != null && walk.getStatus() == WalkStatus.IN_PROGRESS;
     }
 
     public boolean isValidCoordinate(double lat, double lng) {
