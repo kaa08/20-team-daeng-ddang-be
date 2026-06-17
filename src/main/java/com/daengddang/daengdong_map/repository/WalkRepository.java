@@ -30,14 +30,14 @@ public interface WalkRepository extends JpaRepository<Walk, Long> {
     boolean existsByDogAndStatus(Dog dog, WalkStatus status);
 
     @Query("""
-            select walk
+            select (count(walk) > 0)
             from Walk walk
-            join fetch walk.dog dog
-            join fetch dog.user user
+            join walk.dog dog
+            join dog.user user
             where walk.id = :walkId
               and user.id = :userId
             """)
-    Optional<Walk> findOwnedWalkByIdWithDogAndUser(
+    boolean existsOwnedWalkByIdAndUserId(
             @Param("walkId") Long walkId,
             @Param("userId") Long userId
     );
