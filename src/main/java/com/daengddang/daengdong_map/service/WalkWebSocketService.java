@@ -4,6 +4,7 @@ import com.daengddang.daengdong_map.util.*;
 import com.daengddang.daengdong_map.dto.websocket.common.WebSocketErrorReason;
 import com.daengddang.daengdong_map.dto.websocket.inbound.LocationUpdatePayload;
 import com.daengddang.daengdong_map.domain.walk.Walk;
+import com.daengddang.daengdong_map.security.AuthUserExtractor;
 import com.daengddang.daengdong_map.service.cache.BlockCacheStore;
 
 import java.time.LocalDateTime;
@@ -30,9 +31,10 @@ public class WalkWebSocketService {
     @Transactional
     public void handleLocationUpdate(Long walkId, LocationUpdatePayload payload, Principal principal) {
         LocalDateTime timestamp = LocalDateTime.now();
+        Long userId = AuthUserExtractor.requireUserId(principal);
 
-        Walk walk = walkSessionValidator.getActiveWalkOrNull(walkId);
-        if (walk == null) {
+        Walk walk = walkSessionValidator.getOwnedWalkOrThrow(walkId, userId);
+        if (!walkSessionValidator.isActive(walk)) {
             walkEventPublisher.sendError(walkId, WebSocketErrorReason.INVALID_WALK_SESSION.getMessage());
             return;
         }
